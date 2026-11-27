@@ -140,7 +140,7 @@ label.set:last-child { border-bottom: 0; }
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; max-width: 640px; margin: 0 auto;
   background: var(--card); border-top: 3px solid var(--line); border-radius: 18px 18px 0 0;
   box-shadow: 0 -10px 30px rgba(0,0,0,.45); animation: up .18s ease-out;
-  display: flex; flex-direction: column; max-height: 62vh; max-height: 62dvh;
+  display: flex; flex-direction: column; max-height: 48vh; max-height: 48dvh;
 }
 .sheet.good { border-top-color: var(--good); }
 .sheet.bad { border-top-color: var(--bad); }
@@ -156,3 +156,31 @@ body.answered .opts { pointer-events: none; }
 .opt:active { transform: scale(.97); }
 .opt .n { line-height: 1.2; }
 .btn:active, .mode:active, .citem:active { filter: brightness(1.15); }
+
+/* PIN */
+.pindots { display: flex; gap: 14px; justify-content: center; margin: 22px 0 10px; }
+.pindots i { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--muted); }
+.pindots i.on { background: var(--accent); border-color: var(--accent); }
+
+/* Traducción en curso */
+.trwait { font-size: .8rem; color: var(--accent); margin-bottom: 4px; }
+.faded { opacity: .55; }
+
+/* Guías */
+.guidebar { position: sticky; top: calc(66px + var(--safe-t)); z-index: 5; background: rgba(17,20,24,.97); margin: -14px -14px 12px; padding: 8px 14px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.guidebar .chips { display: flex; gap: 6px; overflow-x: auto; width: 100%; padding-bottom: 2px; }
+.chip { flex: none; border: 1px solid var(--line); background: var(--card2); border-radius: 99px; padding: 6px 12px; font-size: .85rem; }
+.gsec { margin-bottom: 10px; scroll-margin-top: 170px; }
+.gsec > summary { cursor: pointer; list-style: none; font-weight: 700; font-size: 1.1rem; padding: 12px 4px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.gsec > summary::before { content: "▸ "; color: var(--accent); }
+.gsec[open] > summary::before { content: "▾ "; }
+
+/* Ampliar imagen */
+[data-zoom] img { cursor: zoom-in; }
+.lightbox { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.92); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 12px; }
+.lightbox img { max-width: 100%; max-height: 85vh; object-fit: contain; background: #dfe4ea; border-radius: 10px; }
+.lightbox span { color: var(--muted); font-size: .85rem; }
+
+#toast { width: max-content; }
+.tiptext { overflow-wrap: anywhere; }
+.guide-tip .clue { min-height: 180px; }

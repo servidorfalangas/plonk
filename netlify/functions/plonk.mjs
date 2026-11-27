@@ -70,7 +70,7 @@ async function country(slug) {
 
 // ---------- Resolución de enlaces de Google Maps ----------
 
-const ALLOWED = /(^|\.)(goo\.gl|google\.[a-z.]+)$/;
+const ALLOWED = /(^|\.)(goo\.gl|google\.(com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2}))$/;
 
 function parseMaps(url) {
   let u = url;
@@ -133,16 +133,15 @@ async function resolve(link) {
 
 // Las panorámicas borradas por Google devuelven una miniatura vacía de ~240 bytes
 async function panoAlive(pano) {
-  try {
+  {
     const r = await fetch(
       `https://streetviewpixels-pa.googleapis.com/v1/thumbnail?cb_client=maps_sv.tactile&w=200&h=100&yaw=0&pitch=0&thumbfov=100&panoid=${encodeURIComponent(pano)}`,
       { headers: { "user-agent": UA } }
     );
-    if (!r.ok) return false;
+    if (r.status === 400 || r.status === 404) return false;
+    if (!r.ok) throw new Error("miniatura " + r.status); // 429/5xx: fallo temporal, no se marca como muerta
     const b = await r.arrayBuffer();
     return b.byteLength > 1500;
-  } catch {
-    return true; // ante la duda, no la descartamos
   }
 }
 
@@ -159,8 +158,10 @@ export default async (req, context) => {
       const u = url.searchParams.get("u");
       if (!u) return json({ error: "falta u" }, { status: 400 });
       const r = await resolve(u);
-      if (!r || !r.pano) return json({ error: "no se pudo resolver" }, { status: 404, cdn: true });
-      if (!(await panoAlive(r.pano))) return json({ error: "panorámica ya no existe" }, { status: 404, cdn: true });
+      // Las panorámicas inexistentes se devuelven como 200 {dead:true} para no llenar la consola de errores
+      if (r && r.pano && !/^[\w-]{10,}$/.test(r.pano)) return json({ dead: true, reason: "id no válido" });
+      if (!r || !r.pano) return json({ dead: true, reason: "no se pudo resolver" }, { cdnSeconds: 604800 });
+      if (!(await panoAlive(r.pano))) return json({ dead: true, reason: "panorámica borrada" }, { cdnSeconds: 604800 });
       return json(r, { cdnSeconds: 2592000 });
     }
     return json({ error: "ruta desconocida" }, { status: 404 });
