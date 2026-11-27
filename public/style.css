@@ -123,3 +123,14 @@ body.in-session { padding-top: var(--safe-t); }
 select, input[type=number] { font: inherit; background: var(--card2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
 label.set { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 label.set:last-child { border-bottom: 0; }
+
+/* Practicar */
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
+.seg button { border: 0; background: none; padding: 10px 6px; border-radius: 9px; font-weight: 600; color: var(--muted); }
+.seg button.on { background: var(--accent); color: #1a1406; }
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mode { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-weight: 600; text-align: left; min-height: 86px; }
+.mode span { font-size: 1.6rem; }
+.linkbtn { background: none; border: 0; color: var(--accent); padding: 4px 0; font-size: 0.85rem; }
+#tabs button { padding: 4px 10px; }
+.loading { white-space: pre-line; }
