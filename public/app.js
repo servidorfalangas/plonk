@@ -6,7 +6,7 @@
 const DAY = 86400000;
 const STORE_KEY = "plonk_state_v1";
 const RES_KEY = "plonk_res_v4";
-const TR_VER = "3";
+const TR_VER = "4";
 const DATA_CACHE = "plonk-data-v1";
 const EASY_ORDER = [
   "spain", "united-states", "japan", "brazil", "russia", "united-kingdom", "france",
@@ -191,8 +191,7 @@ function enrich(d) {
     const imageLinks = (t.links || []).filter((l) => !all.includes(l));
     if (t.imageLink !== undefined) { imageLinks.length = 0; if (t.imageLink && /^https?:/.test(t.imageLink) && t.imageLink.match(MAPS_LINK)) imageLinks.push(t.imageLink); }
     const good = [...imageLinks];
-    for (const line of t.text) {
-      const L = String(line);
+    for (const L of t.text.flatMap((x) => String(x).split("\n"))) {
       if (/^\s*(\*\*)?\s*(note|nota|however|in contrast)\b/i.test(L)) continue; // contraejemplos
       for (const m of L.matchAll(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g)) {
         const [, anchor, url] = m;
@@ -457,7 +456,7 @@ const POST_FIX = [
   [W("marcadores de carretera"), "líneas de la carretera"], [W("rieles en el techo"), "baca"], [W("rieles de techo"), "baca"],
   [W("en forma de diamante"), "en forma de rombo"], [W("diamantes amarillos"), "rombos amarillos"], [W("autos"), "coches"], [W("auto"), "coche"],
   [W("el US"), "EE. UU."], [W("El US"), "EE. UU."], [W("los US"), "EE. UU."], [W("US"), "EE. UU."],
-  [W("el UK"), "el Reino Unido"], [W("El UK"), "El Reino Unido"], [W("UK"), "Reino Unido"], [W("EU"), "UE"],
+  [/EE\. UU\.\./g, "EE. UU."], [W("el UK"), "el Reino Unido"], [W("El UK"), "El Reino Unido"], [W("UK"), "Reino Unido"], [W("EU"), "UE"],
 ];
 // Arregla ** sueltos o pegados que deja el traductor
 function fixBold(t) {
