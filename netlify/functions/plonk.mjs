@@ -4,16 +4,14 @@
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
 
-const json = (data, { status = 200, cdnSeconds = 86400 } = {}) =>
+const json = (data, { status = 200, cdnSeconds = 86400, cdn = false } = {}) =>
   new Response(JSON.stringify(data), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "cache-control": status === 200 ? "public, max-age=3600" : "no-store",
-      ...(status === 200
-        ? {
-            "netlify-cdn-cache-control": `public, durable, s-maxage=${cdnSeconds}, stale-while-revalidate=604800`,
-          }
+      "cache-control": status === 200 || cdn ? "public, max-age=3600" : "no-store",
+      ...(status === 200 || cdn
+        ? { "netlify-cdn-cache-control": `public, durable, s-maxage=${cdn ? 604800 : cdnSeconds}, stale-while-revalidate=604800` }
         : {}),
     },
   });
@@ -133,6 +131,21 @@ async function resolve(link) {
   return parseMaps(url);
 }
 
+// Las panorámicas borradas por Google devuelven una miniatura vacía de ~240 bytes
+async function panoAlive(pano) {
+  try {
+    const r = await fetch(
+      `https://streetviewpixels-pa.googleapis.com/v1/thumbnail?cb_client=maps_sv.tactile&w=200&h=100&yaw=0&pitch=0&thumbfov=100&panoid=${encodeURIComponent(pano)}`,
+      { headers: { "user-agent": UA } }
+    );
+    if (!r.ok) return false;
+    const b = await r.arrayBuffer();
+    return b.byteLength > 1500;
+  } catch {
+    return true; // ante la duda, no la descartamos
+  }
+}
+
 export default async (req, context) => {
   const url = new URL(req.url);
   try {
@@ -146,7 +159,8 @@ export default async (req, context) => {
       const u = url.searchParams.get("u");
       if (!u) return json({ error: "falta u" }, { status: 400 });
       const r = await resolve(u);
-      if (!r) return json({ error: "no se pudo resolver" }, { status: 404 });
+      if (!r || !r.pano) return json({ error: "no se pudo resolver" }, { status: 404, cdn: true });
+      if (!(await panoAlive(r.pano))) return json({ error: "panorámica ya no existe" }, { status: 404, cdn: true });
       return json(r, { cdnSeconds: 2592000 });
     }
     return json({ error: "ruta desconocida" }, { status: 404 });

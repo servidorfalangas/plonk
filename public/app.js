@@ -5,7 +5,7 @@
 
 const DAY = 86400000;
 const STORE_KEY = "plonk_state_v1";
-const RES_KEY = "plonk_res_v3";
+const RES_KEY = "plonk_res_v4";
 const DATA_CACHE = "plonk-data-v1";
 const EASY_ORDER = [
   "spain", "united-states", "japan", "brazil", "russia", "united-kingdom", "france",
@@ -311,14 +311,13 @@ function parseMaps(u) {
 
 async function resolveLink(link) {
   if (link in RES) return RES[link];
-  let r = parseMaps(link);
-  if (!r) {
-    try {
-      const res = await fetch("/api/resolve?u=" + encodeURIComponent(link));
-      if (res.ok) r = await res.json();
-      else if (res.status >= 500) return null; // fallo temporal: reintentar otro día
-    } catch { return null; }
-  }
+  // El servidor resuelve el enlace y comprueba que la panorámica siga existiendo
+  let r = null;
+  try {
+    const res = await fetch("/api/resolve?u=" + encodeURIComponent(link));
+    if (res.ok) r = await res.json();
+    else if (res.status >= 500) return null; // fallo temporal: reintentar más tarde
+  } catch { return null; }
   RES[link] = r && r.pano ? { p: r.pano, a: r.lat, o: r.lng, h: r.heading || 0, t: r.pitch || 0, f: r.fov || 75 } : false;
   saveRes();
   return RES[link];
@@ -1044,7 +1043,7 @@ function pinGate() {
 
 async function boot() {
   // Limpieza de la caché antigua (versión 1 guardaba los países en localStorage)
-  try { Object.keys(localStorage).filter((k) => k.startsWith("plonk_c_") || k === "plonk_countries").forEach((k) => localStorage.removeItem(k)); } catch {}
+  try { Object.keys(localStorage).filter((k) => k.startsWith("plonk_c_") || k === "plonk_countries" || k === "plonk_res_v3").forEach((k) => localStorage.removeItem(k)); } catch {}
   await pinGate();
   try {
     loadingScreen("Cargando…");
