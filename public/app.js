@@ -840,6 +840,15 @@ function lookalikes(slug, n) {
   const conf = { ...(S.confusion[slug] || {}) };
   for (const [other, m] of Object.entries(S.confusion)) if (m[slug]) conf[other] = (conf[other] || 0) + m[slug];
   Object.entries(conf).sort((a, b) => b[1] - a[1]).forEach(([x]) => add(x));
+  // Los países con los que Plonkit compara este (p. ej. Chequia ↔ Eslovaquia)
+  const d = DATA[slug];
+  if (d) {
+    const text = d.steps.flatMap((st) => st.tips.flatMap((t) => t.text)).join(" ").toLowerCase();
+    const counts = COUNTRIES.filter((c) => c.slug !== slug && c.title.length > 3)
+      .map((c) => [c.slug, text.split(c.title.toLowerCase()).length - 1]).filter(([, n]) => n > 0)
+      .sort((a, b) => b[1] - a[1]);
+    counts.forEach(([x]) => add(x));
+  }
   const cats = BY_SLUG[slug]?.cat || [];
   for (const x of levelCountries("medio")) if ((BY_SLUG[x]?.cat || []).some((c) => cats.includes(c))) add(x);
   return out.slice(0, n);
@@ -855,6 +864,7 @@ async function startCountryPractice(selected) {
     loadingScreen("Preparando…");
     S.settings.recent = [...selected, ...(S.settings.recent || []).filter((x) => !selected.includes(x))].slice(0, 8);
     save();
+    for (const x of selected) { if (!(await loadCountryLocal(x))) { try { await loadCountry(x); } catch {} } }
     const extra = selected.length < 3 ? [...new Set(selected.flatMap((x) => lookalikes(x, 4)))].filter((x) => !selected.includes(x)).slice(0, 5) : [];
     const all = [...selected, ...extra];
     const missing = [];
