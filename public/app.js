@@ -718,9 +718,16 @@ function shuffle(a) {
   for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
   return a;
 }
-function options(slug, poolSlugs) {
+function options(slug, poolSlugs, must) {
+  // En la práctica por país, el país elegido siempre está entre las opciones
+  const forced = (must || []).filter((x) => x !== slug && BY_SLUG[x] && family(x) !== family(slug)).slice(0, 1);
+  if (forced.length) {
+    const rest = options(slug, (poolSlugs || []).filter((x) => x !== forced[0])).filter((x) => x !== slug && x !== forced[0]).slice(0, 2);
+    return shuffle([slug, forced[0], ...rest]);
+  }
   const fam = family(slug);
-  const pool = (poolSlugs && poolSlugs.length > 6 ? poolSlugs : COUNTRIES.map((c) => c.slug)).filter((s) => s !== slug && BY_SLUG[s] && family(s) !== fam);
+  const base = poolSlugs && poolSlugs.filter((s) => s !== slug && family(s) !== fam).length >= 3 ? poolSlugs : COUNTRIES.map((c) => c.slug);
+  const pool = base.filter((s) => s !== slug && BY_SLUG[s] && family(s) !== fam);
   const picked = new Set();
   const conf = S.confusion[slug] || {};
   // Como mucho 1 país con el que te sueles confundir (si has fallado 2+ veces), y no siempre
@@ -821,12 +828,91 @@ async function startPracticeInner(catId, level) {
     if (l.length) picked.push(l.shift());
   }
   const queue = picked.map((t) => ({ type: "practice", key: t.key, locOnly: catId === "ubicacion" }));
-  beginSession({ mode: "practice", queue, pool: loaded, catId, level, goal: Math.min(20, queue.length) });
+  S.settings.lastPractice = { catId, level }; save();
+  const cat = CATS.find((c) => c.id === catId);
+  beginSession({ mode: "practice", queue, pool: loaded, catId, level, goal: Math.min(20, queue.length), label: `${cat.name} (${LEVELS[level].name})` });
+}
+
+// Países que más se parecen a uno: con los que te has confundido y vecinos del mismo continente
+function lookalikes(slug, n) {
+  const out = [];
+  const add = (x) => { if (x && x !== slug && BY_SLUG[x] && family(x) !== family(slug) && !out.includes(x)) out.push(x); };
+  const conf = { ...(S.confusion[slug] || {}) };
+  for (const [other, m] of Object.entries(S.confusion)) if (m[slug]) conf[other] = (conf[other] || 0) + m[slug];
+  Object.entries(conf).sort((a, b) => b[1] - a[1]).forEach(([x]) => add(x));
+  const cats = BY_SLUG[slug]?.cat || [];
+  for (const x of levelCountries("medio")) if ((BY_SLUG[x]?.cat || []).some((c) => cats.includes(c))) add(x);
+  return out.slice(0, n);
+}
+
+// Práctica de uno o varios países concretos. Con 1-2 países se mezclan sus "parecidos"
+// para que la respuesta no sea siempre la misma.
+async function startCountryPractice(selected) {
+  if (starting || session || !selected.length) return;
+  starting = true;
+  try {
+    const tab = currentTab;
+    loadingScreen("Preparando…");
+    S.settings.recent = [...selected, ...(S.settings.recent || []).filter((x) => !selected.includes(x))].slice(0, 8);
+    save();
+    const extra = selected.length < 3 ? [...new Set(selected.flatMap((x) => lookalikes(x, 4)))].filter((x) => !selected.includes(x)).slice(0, 5) : [];
+    const all = [...selected, ...extra];
+    const missing = [];
+    for (const x of all) if (!(await loadCountryLocal(x))) missing.push(x);
+    if (missing.length) await loadMany(missing, (i, n) => { if (currentTab === tab) loadingScreen(`Preparando países… ${i}/${n}`); });
+    if (currentTab !== tab) return;
+    const main = shuffle(selected.filter((x) => DATA[x]).flatMap((x) => allTips(x, true)));
+    const others = shuffle(extra.filter((x) => DATA[x]).flatMap((x) => allTips(x, true)));
+    if (!main.length) { toast("No se pudo cargar ese país"); return go("practice"); }
+    // ~65% del país elegido, ~35% de sus parecidos
+    const picked = [];
+    while (picked.length < 32 && (main.length || others.length)) {
+      const fromMain = others.length === 0 || (main.length && Math.random() < 0.65);
+      picked.push((fromMain ? main : others).shift());
+    }
+    const queue = picked.map((t) => ({ type: "practice", key: t.key }));
+    S.settings.lastPractice = { countries: selected }; save();
+    beginSession({ mode: "practice", queue, pool: all.filter((x) => DATA[x]), catId: "mezcla", countries: selected, goal: Math.min(20, queue.length), label: selected.map(countryName).join(", ") });
+  } finally { starting = false; }
+}
+
+const SESSION_KEY = "plonk_session_v1";
+function saveSnapshot() {
+  if (!session) return;
+  const { queue, retryQueue, mode, done, right, wrong, firstRight, shown, total, goal, pool, catId, level, countries, label } = session;
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify({ t: Date.now(), queue, retryQueue, mode, done, right, wrong, firstRight, shown, total, goal, pool, catId, level, countries, label })); } catch {}
+}
+function getSnapshot() {
+  try {
+    const x = JSON.parse(localStorage.getItem(SESSION_KEY));
+    if (x && Date.now() - x.t < 12 * 3600e3 && (x.queue.length || (x.retryQueue || []).length)) return x;
+  } catch {}
+  return null;
+}
+function clearSnapshot() { try { localStorage.removeItem(SESSION_KEY); } catch {} }
+function snapshotLabel(x) {
+  if (x.mode === "daily") return `Continuar repaso · ${x.queue.length} restantes`;
+  return `Continuar ${x.label || "práctica"} · ${x.shown}/${x.goal}`;
+}
+async function resumeSnapshot() {
+  const x = getSnapshot();
+  if (!x || starting || session) return;
+  starting = true;
+  try {
+    loadingScreen("Preparando…");
+    const slugs = [...new Set([...x.queue, ...(x.retryQueue || [])].map((q) => q.key.split("/")[0]).concat(x.pool || []))];
+    const missing = [];
+    for (const sl of slugs) if (!(await loadCountryLocal(sl))) missing.push(sl);
+    if (missing.length) await loadMany(missing);
+    beginSession(x);
+  } finally { starting = false; }
 }
 
 function beginSession(s) {
-  session = Object.assign({ done: 0, right: 0, wrong: 0, shown: 0, total: s.queue.length }, s);
+  session = Object.assign({ done: 0, right: 0, wrong: 0, firstRight: 0, shown: 0, retryQueue: [], total: s.queue.length }, s);
+  delete session.t;
   document.body.classList.add("in-session");
+  try { history.pushState({ s: 1 }, ""); } catch {}
   prefetchSessionLocations();
   nextItem();
 }
@@ -843,30 +929,50 @@ function prefetchSessionLocations() {
   }
 }
 
-function endSession() {
+function quitSession() {
+  if (!session) return;
+  if (session.done && !confirm("¿Salir? Lo que has respondido ya está guardado y podrás continuar luego.")) return;
+  endSession(true);
+}
+function endSession(paused) {
   document.body.classList.remove("in-session", "answered");
   const s = session;
+  if (paused && s && s.done) saveSnapshot(); else clearSnapshot();
   session = null;
-  if (s && !s.done && s.total) toast(navigator.onLine ? "No se pudo cargar ninguna tarjeta" : "Sin conexión: prueba más tarde");
+  if (s && !s.done && s.total && !paused) toast(navigator.onLine ? "No se pudo cargar ninguna tarjeta" : "Sin conexión: prueba más tarde");
   if (s && s.done) {
-    if (s.mode === "daily") {
+    if (s.mode === "daily" && !paused) {
       S.history.push({ d: today(), right: s.right, wrong: s.wrong });
       S.history = S.history.slice(-200);
       save();
     }
+    // Confusiones de esta ronda
+    const pairs = Object.entries(s.conf || {}).sort((a, b) => b[1] - a[1]).slice(0, 2)
+      .map(([k]) => k.split(">").map((x) => esc(countryName(x))).join(" ↔ "));
+    const first = s.mode === "practice" ? `<div class="stat"><b>${s.firstRight}/${s.shownFirst || s.goal}</b><span>a la primera</span></div>` : `<div class="stat"><b>${s.right}</b><span>aciertos</span></div>`;
     app.innerHTML = `
-      <h1>${s.mode === "daily" ? "Sesión terminada" : "Práctica terminada"}</h1>
-      <div class="stats">
-        <div class="stat"><b>${s.right}</b><span>aciertos</span></div>
-        <div class="stat"><b>${s.wrong}</b><span>fallos</span></div>
-      </div>
-      ${s.mode === "practice" ? `<button class="btn" id="again">Otra ronda</button><div style="height:10px"></div>` : ""}
-      <button class="btn ghost" id="home">Volver</button>`;
-    if ($("#again")) $("#again").onclick = () => startPractice(s.catId, s.level);
+      <h1>${paused ? "Sesión en pausa" : s.mode === "daily" ? "Sesión terminada" : "Práctica terminada"}</h1>
+      <div class="stats">${first}<div class="stat"><b>${s.wrong}</b><span>fallos</span></div></div>
+      ${pairs.length ? `<div class="panel small">Te has liado con: <b>${pairs.join("</b> · <b>")}</b></div>` : ""}
+      ${paused ? `<button class="btn" id="cont">▶ Continuar</button><div style="height:10px"></div>` : ""}
+      ${s.mode === "practice" && !paused ? `<div class="row"><button class="btn" id="again">Otra ronda</button><button class="btn ghost" id="mode">Cambiar modo</button></div><div style="height:10px"></div>` : ""}
+      <button class="btn ghost" id="home">${s.mode === "daily" ? "Volver al inicio" : "Volver"}</button>`;
+    if ($("#cont")) $("#cont").onclick = resumeSnapshot;
+    if ($("#again")) $("#again").onclick = () => (s.countries ? startCountryPractice(s.countries) : startPractice(s.catId, s.level));
+    if ($("#mode")) $("#mode").onclick = () => go("practice");
     $("#home").onclick = () => go(s.mode === "daily" ? "home" : "practice");
-  } else go(currentTab === "practice" ? "practice" : "home");
+  } else go(currentTab === "practice" || currentTab === "pick" ? "practice" : "home");
   prefetchAll();
 }
+
+// Gesto/botón "atrás" del móvil: no sale de la app
+window.addEventListener("popstate", () => {
+  if (document.querySelector(".lightbox")) { document.querySelector(".lightbox").remove(); history.pushState({}, ""); return; }
+  if (session) { history.pushState({ s: 1 }, ""); quitSession(); return; }
+  if (currentTab === "country") return go("countries");
+  if (currentTab === "pick") return go("practice");
+  if (currentTab !== "home") return go("home");
+});
 
 function requeue(item, gap) {
   // Si no quedan otras tarjetas, no repetirla seguida: vuelve en 10 minutos
@@ -878,9 +984,15 @@ function requeue(item, gap) {
 async function nextItem() {
   if (!session) return;
   window.scrollTo(0, 0);
-  if (session.goal && session.shown >= session.goal) return endSession();
+  // Práctica: 20 tarjetas y después, aparte, el repaso de las falladas
+  if (session.goal && (session.shown >= session.goal || !session.queue.length) && !session.inRetry) {
+    session.shownFirst = session.shown;
+    if (session.retryQueue.length) { session.inRetry = true; session.queue = session.retryQueue; session.retryQueue = []; }
+    else return endSession();
+  }
   const item = session.queue.shift();
   if (!item) return endSession();
+  saveSnapshot();
   prefetchSessionLocations();
   if (item.type === "intro") return showIntro(item);
   const tipKey = item.key.replace(/\|[pl]$/, "");
@@ -899,19 +1011,20 @@ async function nextItem() {
     return nextItem();
   }
   if (loc) lastLink[tip.key] = loc.link;
-  session.shown++;
+  if (!session.inRetry) session.shown++;
   showCard(item, tip, loc);
 }
 
 function topbar() {
   let pct, label;
-  if (session.goal) { pct = (session.shown / session.goal) * 100; label = `${session.shown}/${session.goal}`; }
-  else { pct = session.total ? (session.done / session.total) * 100 : 0; label = `${session.queue.length + 1} restantes`; }
+  if (session.inRetry) { const left = session.queue.length + 1; pct = 100; label = `Repaso de fallos · ${left}`; }
+  else if (session.goal) { pct = (session.shown / session.goal) * 100; label = `${session.shown}/${session.goal}`; }
+  else { const left = session.queue.length + 1; pct = (session.done / (session.done + left)) * 100; label = `${session.done} hechas · ${left} en cola`; }
   return `<div class="topbar"><button class="x" id="quit" aria-label="Salir">✕</button>
     <div class="progress"><i style="width:${pct}%"></i></div>
     <span class="small muted">${label}</span></div>`;
 }
-function bindQuit() { $("#quit").onclick = () => endSession(); }
+function bindQuit() { $("#quit").onclick = quitSession; }
 
 function showIntro(item) {
   const tip = findTip(item.key);
@@ -921,9 +1034,10 @@ function showIntro(item) {
     ${tip.img ? `<div class="clue">${imgHTML(tip.img)}</div>` : ""}
     <div class="intro-head"><span class="flag">${flag(tip.slug)}</span><b>${esc(countryName(tip.slug))}</b></div>
     ${catsHTML(tip)}
+    ${tip.links.length ? `<p class="small muted">📍 Te lo preguntaré en ${tip.links.length > 1 ? tip.links.length + " ubicaciones reales distintas" : "una ubicación real"} de Street View.</p>` : ""}
     ${tipTextHTML(tip)}
-    <p class="small muted">${tip.links.length ? `En el repaso te saldrá en ${tip.links.length > 1 ? tip.links.length + " ubicaciones reales distintas" : "una ubicación real"} de Street View.` : ""}</p>
-    <div class="sticky"><button class="btn" id="ok">Entendido</button></div>`;
+    <div class="spacer"></div>
+    <div class="actionbar"><button class="btn" id="ok">Entendido</button></div>`;
   bindQuit();
   fillTranslations(app, true);
   const ok = $("#ok");
@@ -936,20 +1050,27 @@ function showIntro(item) {
     S.cards[tip.key + "|p"] = S.cards[tip.key + "|p"] || newCard();
     save();
     session.done++;
-    requeue({ type: "card", key: tip.key + "|p" }, 2);
+    requeue({ type: "card", key: tip.key + "|p" }, 4);
     nextItem();
   };
 }
 
 function showCard(item, tip, loc) {
-  const opts = options(tip.slug, session.mode === "practice" ? session.pool : null);
-  app.innerHTML = `${topbar()}
-    <div class="kind">${loc ? "📍 ¿En qué país estás?" : "🔎 ¿De qué país es esta pista?"}</div>
-    ${loc ? svHTML(loc) : `<div class="clue">${imgHTML(tip.img)}</div>`}
-    ${loc && session.mode === "practice" && session.catId !== "mezcla" && session.catId !== "ubicacion" ? `<p class="small muted" style="margin:6px 0 0">Fíjate en: ${CATS.find((c) => c.id === session.catId).icon} ${esc(CATS.find((c) => c.id === session.catId).name.toLowerCase())}</p>` : ""}
-    <div class="opts">${opts.map((s) => `<button class="opt" data-s="${s}"><span class="f">${flag(s)}</span><span class="n">${esc(countryName(s))}</span></button>`).join("")}</div>
-    <div id="back"></div>`;
+  const opts = options(tip.slug, session.mode === "practice" ? session.pool : null, session.countries && session.countries.length < 3 ? shuffle([...session.countries]) : null);
+  const hint = session.mode === "practice" && CATS.find((c) => c.id === session.catId && c.re);
+  app.innerHTML = `<div class="cardscreen">${topbar()}
+    <div class="kind">${loc ? "📍 ¿En qué país estás?" : "🔎 ¿De qué país es esta pista?"}${hint ? ` <span class="hint">· fíjate en ${hint.icon} ${esc(hint.name.toLowerCase())}</span>` : ""}</div>
+    <div class="media">${loc ? svHTML(loc) : `<div class="clue loading-img">${imgHTML(tip.img)}</div>`}</div>
+    <div class="opts">${opts.map((s) => `<button class="opt" data-s="${s}" ${loc ? "" : "disabled"}><span class="f">${flag(s)}</span><span class="n">${esc(countryName(s))}</span></button>`).join("")}</div>
+    </div><div id="back"></div>`;
   bindQuit();
+  if (!loc) {
+    // No dejar responder hasta ver la foto
+    const img = app.querySelector(".clue img");
+    const enable = () => { app.querySelector(".clue")?.classList.remove("loading-img"); app.querySelectorAll(".opt").forEach((b) => (b.disabled = false)); };
+    if (!img || img.complete) enable();
+    else { img.addEventListener("load", enable); img.addEventListener("error", () => setTimeout(enable, 1500)); setTimeout(enable, 5000); }
+  }
   let answered = false;
   app.querySelectorAll(".opt").forEach((b) => (b.onclick = () => { if (answered) return; answered = true; answer(item, tip, !!loc, b.dataset.s); }));
 }
@@ -972,17 +1093,22 @@ function answer(item, tip, isLoc, chosen) {
   }
   session.done++;
   if (correct) session.right++; else session.wrong++;
+  if (correct && !item.retry && !session.inRetry) session.firstRight++;
+  if (!correct) { session.conf = session.conf || {}; const k = [tip.slug, chosen].sort().join(">"); session.conf[k] = (session.conf[k] || 0) + 1; }
   if (again) requeue(item, correct ? 4 : 3);
-  if (!correct && item.type === "practice" && !item.retry) { requeue({ ...item, retry: true }, 5); if (session.goal) session.goal = Math.min(session.goal + 1, 25); }
+  if (!correct && item.type === "practice" && !item.retry && !session.inRetry) session.retryQueue.push({ ...item, retry: true });
   save();
+  saveSnapshot();
   if (navigator.vibrate) try { navigator.vibrate(correct ? 15 : [30, 40, 30]); } catch {}
   // Hoja inferior: veredicto + Siguiente siempre a mano, explicación desplazable debajo
-  $("#back").innerHTML = `<div class="sheet ${correct ? "good" : "bad"}">
+  $("#back").innerHTML = `<div class="sheet ${correct ? "good collapsed" : "bad"}">
+      <div class="grab"></div>
       <div class="sheet-head">
         <div class="verdict ${correct ? "good" : "bad"}">${correct ? "✓ ¡Correcto! " + flag(tip.slug) + " " + esc(countryName(tip.slug))
           : `<span class="small muted">Elegiste ${esc(countryName(chosen))}</span><br>✗ Era ${flag(tip.slug)} ${esc(countryName(tip.slug))}`}</div>
         <button class="btn" id="next">Siguiente</button>
       </div>
+      <button class="whybtn" id="why">${correct ? "Ver por qué ▾" : "Ocultar explicación ▴"}</button>
       <div class="sheet-body">
         ${catsHTML(tip)}
         ${tipTextHTML(tip)}
@@ -999,6 +1125,13 @@ function answer(item, tip, isLoc, chosen) {
     toast("Tarjeta oculta");
   };
   document.body.classList.add("answered");
+  const sheet = $("#back .sheet");
+  const toggle = () => {
+    sheet.classList.toggle("collapsed");
+    $("#why").textContent = sheet.classList.contains("collapsed") ? "Ver por qué ▾" : "Ocultar explicación ▴";
+  };
+  $("#why").onclick = toggle;
+  $("#back .grab").onclick = toggle;
   fillTranslations($("#back"), true);
   const nx = $("#next");
   nx.disabled = true; setTimeout(() => (nx.disabled = false), 350);
@@ -1015,17 +1148,19 @@ function answer(item, tip, isLoc, chosen) {
 
 let currentTab = "home";
 function go(tab, arg) {
+  if (tab !== currentTab || arg) { try { history.pushState({ tab }, ""); } catch {} }
   currentTab = tab;
   if (trObserver) { trObserver.disconnect(); trObserver = null; }
-  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab || (tab === "country" && b.dataset.tab === "countries")));
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab || (tab === "country" && b.dataset.tab === "countries") || (tab === "pick" && b.dataset.tab === "practice")));
   window.scrollTo(0, 0);
   if (tab === "home") renderHome();
   else if (tab === "practice") renderPractice();
   else if (tab === "countries") renderCountries();
   else if (tab === "country") renderCountry(arg);
   else if (tab === "settings") renderSettings();
+  else if (tab === "pick") renderPick();
 }
-document.querySelectorAll("#tabs button").forEach((b) => (b.onclick = () => { if (!session) go(b.dataset.tab); }));
+document.querySelectorAll("#tabs button").forEach((b) => (b.onclick = () => { if (!session && !starting) go(b.dataset.tab); }));
 
 async function renderHome() {
   rollDay();
@@ -1036,15 +1171,15 @@ async function renderHome() {
   const mastery = overallMastery();
   const next = nextLocked();
   const shown = S.unlocked.slice(0, 40);
+  const snap = getSnapshot();
   app.innerHTML = `
     <h1>Repaso diario</h1>
     <div class="stats">
       <div class="stat"><b>${due}</b><span>para repasar</span></div>
       <div class="stat"><b>${fresh}</b><span>pistas nuevas hoy</span></div>
     </div>
-    <button class="btn" id="start" ${due + fresh ? "" : "disabled"}>${due + fresh ? "Empezar" : "Todo hecho por hoy ✅"}</button>
-    <div style="height:10px"></div>
-    <button class="btn ghost" id="toPractice">🎯 Practicar por tipo de pista</button>
+    ${snap ? `<button class="btn" id="cont">▶ ${esc(snapshotLabel(snap))}</button><div style="height:10px"></div>` : ""}
+    <button class="btn ${snap ? "ghost" : ""}" id="start" ${due + fresh ? "" : "disabled"}>${due + fresh ? `Empezar repaso (${due + fresh})` : "Todo hecho por hoy ✅"}</button>
     <h2>Tus países (${S.unlocked.length})</h2>
     <div class="panel">
       <div class="small muted" style="display:flex;justify-content:space-between">
@@ -1056,23 +1191,61 @@ async function renderHome() {
     <div class="clist">${shown.map(countryItem).join("")}</div>
     ${S.unlocked.length > shown.length ? `<p class="small muted">…y ${S.unlocked.length - shown.length} más en la pestaña Países.</p>` : ""}
     <p class="small muted" style="margin-top:20px">Contenido de Plonk It (plonkit.net), licencia CC BY-NC-SA 4.0. Panorámicas © Google.</p>`;
-  $("#start").onclick = startDaily;
-  $("#toPractice").onclick = () => go("practice");
+  $("#start").onclick = () => { if (snap && snap.mode === "daily") clearSnapshot(); startDaily(); };
+  if ($("#cont")) $("#cont").onclick = resumeSnapshot;
   bindCountryItems();
 }
 
 function renderPractice() {
   const level = S.settings.level;
+  const snap = getSnapshot();
+  const lp = S.settings.lastPractice;
+  const lpLabel = lp ? (lp.countries ? lp.countries.filter((x) => BY_SLUG[x]).map(countryName).join(", ") : `${CATS.find((c) => c.id === lp.catId)?.name} · ${LEVELS[lp.level]?.name}`) : "";
   app.innerHTML = `
     <h1>Practicar</h1>
-    <p class="muted small">Rondas de 20 tarjetas: ubicaciones reales de Street View siempre que la pista las tenga (si no, la foto de la pista). No cuentan para tu repaso diario.</p>
+    <p class="muted small">Rondas de 20 · no cuentan para el repaso diario</p>
+    ${snap && snap.mode === "practice" ? `<button class="btn" id="cont">▶ ${esc(snapshotLabel(snap))}</button><div style="height:8px"></div>` : ""}
+    ${lp && lpLabel ? `<button class="btn ${snap && snap.mode === "practice" ? "ghost" : ""}" id="repeat">↻ Repetir: ${esc(lpLabel)}</button>` : ""}
     <h3>Nivel</h3>
     <div class="seg">${Object.entries(LEVELS).map(([id, l]) => `<button data-l="${id}" class="${id === level ? "on" : ""}">${l.name}</button>`).join("")}</div>
     <p class="small muted" style="margin-top:6px">${esc(LEVELS[level].desc)}${level === "dificil" ? ` (${COUNTRIES.length})` : ""}</p>
-    <h3>Modo</h3>
+    <h3>Por país</h3>
+    <button class="mode wide" id="pickc"><span>🌍</span>Elegir uno o varios países…</button>
+    ${(S.settings.recent || []).length ? `<div class="chips recent">${S.settings.recent.filter((x) => BY_SLUG[x]).map((x) => `<button class="chip" data-rc="${x}">${flag(x)} ${esc(countryName(x))}</button>`).join("")}</div>` : ""}
+    <h3>Por tipo de pista</h3>
     <div class="modes">${CATS.map((c) => `<button class="mode" data-c="${c.id}"><span>${c.icon}</span>${esc(c.name)}</button>`).join("")}</div>`;
+  $("#pickc").onclick = () => go("pick");
+  if ($("#cont")) $("#cont").onclick = resumeSnapshot;
+  if ($("#repeat")) $("#repeat").onclick = () => { clearSnapshot(); lp.countries ? startCountryPractice(lp.countries) : startPractice(lp.catId, lp.level); };
+  app.querySelectorAll("[data-rc]").forEach((b) => (b.onclick = () => startCountryPractice([b.dataset.rc])));
   app.querySelectorAll("[data-l]").forEach((b) => (b.onclick = () => { S.settings.level = b.dataset.l; save(); renderPractice(); }));
   app.querySelectorAll("[data-c]").forEach((b) => (b.onclick = () => startPractice(b.dataset.c, S.settings.level)));
+}
+
+let pickSel = [];
+function renderPick() {
+  const order = unlockOrder();
+  app.innerHTML = `
+    <div class="topbar"><button class="x" id="b" aria-label="Volver">←</button><b>Practicar por país</b></div>
+    <p class="small muted">Elige uno o varios. Con uno o dos, también salen sus países más parecidos para que no sea siempre la misma respuesta.</p>
+    <input id="q" class="search" type="search" placeholder="Buscar país…" autocomplete="off">
+    <div class="clist" id="plist">${order.map((x) => `<label class="citem pick" data-name="${esc(countryName(x).toLowerCase() + " " + (BY_SLUG[x]?.title || "").toLowerCase())}">
+      <span class="flag">${flag(x)}</span><span class="info"><b>${esc(countryName(x))}</b></span>
+      <input type="checkbox" value="${x}" ${pickSel.includes(x) ? "checked" : ""}></label>`).join("")}</div>
+    <div class="sticky"><button class="btn" id="go" ${pickSel.length ? "" : "disabled"}>Practicar${pickSel.length ? ` (${pickSel.length})` : ""}</button></div>`;
+  $("#b").onclick = () => go("practice");
+  const norm = (x) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  $("#q").oninput = (e) => {
+    const q = norm(e.target.value.trim());
+    app.querySelectorAll(".pick").forEach((el) => (el.style.display = !q || norm(el.dataset.name).includes(q) ? "" : "none"));
+  };
+  app.querySelectorAll(".pick input").forEach((cb) => (cb.onchange = () => {
+    pickSel = cb.checked ? [...pickSel, cb.value] : pickSel.filter((x) => x !== cb.value);
+    const g = $("#go");
+    g.disabled = !pickSel.length;
+    g.textContent = "Practicar" + (pickSel.length ? ` (${pickSel.length})` : "");
+  }));
+  $("#go").onclick = () => { const sel = pickSel; pickSel = []; startCountryPractice(sel); };
 }
 
 function countryItem(slug) {
@@ -1099,12 +1272,16 @@ async function renderCountries() {
   const locked = order.filter((s) => !S.unlocked.includes(s));
   app.innerHTML = `
     <h1>Países</h1>
-    <p class="muted small">Toca un país para leer su guía completa en español.</p>
-    ${locked.length ? `<button class="btn ghost small" id="all">🔓 Desbloquear todos los países (${order.length})</button>` : ""}
+    <input id="cq" class="search" type="search" placeholder="Buscar país…" autocomplete="off">
     <h2>Desbloqueados (${unl.length})</h2>
     <div class="clist">${unl.map(countryItem).join("")}</div>
     ${locked.length ? `<h2>Bloqueados (${locked.length})</h2><div class="clist">${locked.map(countryItem).join("")}</div>` : ""}`;
-  if ($("#all")) $("#all").onclick = () => { unlockAll(); renderCountries(); };
+  const norm = (x) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  $("#cq").oninput = (e) => {
+    const q = norm(e.target.value.trim());
+    app.querySelectorAll(".citem").forEach((el) => (el.style.display = !q || norm(countryName(el.dataset.slug) + " " + (BY_SLUG[el.dataset.slug]?.title || "")).includes(q) ? "" : "none"));
+    app.querySelectorAll("h2").forEach((h) => (h.style.display = q ? "none" : ""));
+  };
   bindCountryItems();
 }
 
@@ -1125,11 +1302,13 @@ async function renderCountry(slug) {
   app.innerHTML = `
     <div class="guidebar"><button class="x" id="b" aria-label="Volver">←</button><b>${flag(slug)} ${esc(countryName(slug))}</b>
       <span class="chips">${d.steps.map((st, i) => `<button class="chip" data-go="${i}">${esc(stepTitle(st.title))}</button>`).join("")}</span></div>
+    <button class="btn" id="pc">🎯 Practicar ${esc(countryName(slug))}</button>
+    <div style="height:10px"></div>
     ${unlocked
       ? `<div class="panel small"><div class="progress" style="margin-bottom:6px"><i style="width:${p.pct * 100}%"></i></div>${p.seen}/${p.total} pistas vistas · ${p.mastered} dominadas</div>`
-      : `<button class="btn" id="unl">🔓 Desbloquear ahora</button>`}
+      : `<button class="btn ghost" id="unl">🔓 Añadir al repaso diario</button>`}
     ${d.steps.map((st, i) => `
-      <details class="gsec" id="sec${i}" ${i === 0 ? "open" : ""}>
+      <details class="gsec" id="sec${i}" ${d.steps.length === 1 ? "open" : ""}>
         <summary>${esc(stepTitle(st.title))} <span class="muted small">(${st.tips.length})</span></summary>
         ${st.tips.map((t) => `<div class="guide-tip">
             ${t.img ? `<div class="clue" data-zoom>${imgHTML(t.img)}</div>` : ""}
@@ -1143,6 +1322,7 @@ async function renderCountry(slug) {
     setTimeout(() => sec.scrollIntoView({ block: "start" }), 400);
   }));
   $("#b").onclick = () => go("countries");
+  $("#pc").onclick = () => startCountryPractice([slug]);
   const u = $("#unl");
   if (u) u.onclick = async () => { await unlock(slug); go("country", slug); };
   fillTranslations();
@@ -1167,7 +1347,13 @@ async function renderSettings() {
         <select id="npd">${[5, 10, 15, 20, 30, 50].map((n) => `<option ${n === S.settings.newPerDay ? "selected" : ""}>${n}</option>`).join("")}</select>
       </label>
       <label class="set">Textos en inglés (sin traducir)
-        <input type="checkbox" id="orig" ${S.settings.original ? "checked" : ""}>
+        <input type="checkbox" class="switch" id="orig" ${S.settings.original ? "checked" : ""}>
+      </label>
+      <label class="set">Tema
+        <select id="theme">${[["auto", "Automático"], ["dark", "Oscuro"], ["light", "Claro"]].map(([v, n]) => `<option value="${v}" ${(S.settings.theme || "auto") === v ? "selected" : ""}>${n}</option>`).join("")}</select>
+      </label>
+      <label class="set">Tamaño del texto
+        <select id="fsz">${[["n", "Normal"], ["l", "Grande"]].map(([v, n]) => `<option value="${v}" ${(S.settings.fsz || "n") === v ? "selected" : ""}>${n}</option>`).join("")}</select>
       </label>
     </div>
     <h2>Datos sin conexión</h2>
@@ -1180,6 +1366,9 @@ async function renderSettings() {
       <button class="btn ghost small" id="imp">Importar</button>
     </div>
     <input type="file" id="file" accept="application/json" hidden>
+    <h2>Repaso diario</h2>
+    <p class="small muted">Tienes ${S.unlocked.length} de ${COUNTRIES.length} países en el repaso. Se añaden solos al dominar el 80 %.</p>
+    ${S.unlocked.length < COUNTRIES.length ? `<button class="btn ghost small" id="all">🔓 Añadir todos los países</button>` : ""}
     ${Object.keys(S.hidden).length ? `<h2>Tarjetas ocultas</h2><p class="small muted">Has ocultado ${Object.keys(S.hidden).length}.</p><button class="btn ghost small" id="unhide">Volver a mostrarlas</button>` : ""}
     <h2>Avanzado</h2>
     <div class="row">
@@ -1189,6 +1378,9 @@ async function renderSettings() {
     <p class="small muted" style="margin-top:20px">Contenido de Plonk It (plonkit.net), licencia CC BY-NC-SA 4.0. Panorámicas © Google Street View. Traducción automática.</p>`;
   $("#npd").onchange = (e) => { S.settings.newPerDay = +e.target.value; save(); toast("Guardado"); };
   $("#orig").onchange = (e) => { S.settings.original = e.target.checked; save(); toast("Guardado"); };
+  $("#theme").onchange = (e) => { S.settings.theme = e.target.value; save(); applyLook(); };
+  $("#fsz").onchange = (e) => { S.settings.fsz = e.target.value; save(); applyLook(); };
+  if ($("#all")) $("#all").onclick = () => { if (confirm(`¿Añadir los ${COUNTRIES.length} países al repaso diario? Las pistas nuevas saldrán de todos.`)) { unlockAll(); go("settings"); } };
   if ($("#unhide")) $("#unhide").onclick = () => { S.hidden = {}; save(); toast("Listo"); go("settings"); };
   if ($("#dl")) $("#dl").onclick = async () => {
     const missing = [];
@@ -1311,7 +1503,18 @@ function pinGate() {
   });
 }
 
+function applyLook() {
+  const t = S.settings.theme || "auto";
+  const light = t === "light" || (t === "auto" && window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches);
+  document.documentElement.classList.toggle("light", light);
+  document.documentElement.classList.toggle("big", S.settings.fsz === "l");
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.content = light ? "#f4f6f8" : "#111418";
+}
+try { matchMedia("(prefers-color-scheme: light)").addEventListener("change", applyLook); } catch {}
+
 async function boot() {
+  applyLook();
   // Limpieza de la caché antigua (versión 1 guardaba los países en localStorage)
   try { Object.keys(localStorage).filter((k) => k.startsWith("plonk_c_") || k === "plonk_countries" || k === "plonk_res_v3").forEach((k) => localStorage.removeItem(k)); } catch {}
   await pinGate();
