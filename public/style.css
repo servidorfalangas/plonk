@@ -17,8 +17,8 @@ html, body { margin: 0; background: var(--bg); color: var(--text); }
 body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 16px; line-height: 1.45;
-  padding-top: var(--safe-t);
-  padding-bottom: calc(64px + var(--safe-b));
+  padding-top: calc(58px + var(--safe-t));
+  padding-bottom: calc(70px + var(--safe-b)); /* hueco para la insignia de Netlify */
   overscroll-behavior-y: none;
 }
 main { max-width: 640px; margin: 0 auto; padding: 14px 14px 24px; }
@@ -68,7 +68,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .x { background: none; border: 0; font-size: 1.4rem; color: var(--muted); padding: 2px 6px; }
 .kind { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
 
-.clue { background: #fff; border-radius: var(--radius); overflow: hidden; display: flex; justify-content: center; align-items: center; min-height: 160px; }
+.clue { background: #dfe4ea; border-radius: var(--radius); overflow: hidden; display: flex; justify-content: center; align-items: center; min-height: 160px; }
 .clue img { display: block; max-width: 100%; max-height: 46vh; object-fit: contain; }
 .sv { position: relative; overflow: hidden; height: 56vh; min-height: 300px; border-radius: var(--radius); background: #000; }
 .sv iframe { position: absolute; left: 0; top: -72px; width: 100%; height: calc(100% + 72px); border: 0; }
@@ -92,7 +92,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .tiptext ul { margin: 0 0 8px; padding-left: 20px; }
 .tiptext b { color: #fff; }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
-.sticky { position: sticky; bottom: calc(70px + var(--safe-b)); margin-top: 14px; }
+.sticky { position: sticky; bottom: calc(64px + var(--safe-b)); margin-top: 14px; }
 
 .intro-head { display: flex; align-items: center; gap: 10px; margin: 12px 0 8px; }
 .intro-head .flag { font-size: 2rem; }
@@ -103,19 +103,18 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .guide-tip .body { padding: 12px; }
 
 #tabs {
-  position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-around;
-  background: rgba(17,20,24,.96); backdrop-filter: blur(8px); border-top: 1px solid var(--line);
-  padding: 6px 0 calc(6px + var(--safe-b)); z-index: 10;
+  position: fixed; left: 0; right: 0; top: 0; display: flex; justify-content: space-around;
+  background: rgba(17,20,24,.96); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
+  padding: calc(4px + var(--safe-t)) 0 4px; z-index: 10;
 }
 #tabs button { background: none; border: 0; color: var(--muted); font-size: 0.75rem; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 18px; }
 #tabs button span { font-size: 1.3rem; }
 #tabs button.on { color: var(--accent); }
 body.in-session #tabs { display: none; }
-body.in-session { padding-bottom: var(--safe-b); }
-body.in-session .sticky { bottom: calc(10px + var(--safe-b)); }
+body.in-session { padding-top: var(--safe-t); }
 
 #toast {
-  position: fixed; left: 50%; bottom: calc(84px + var(--safe-b)); transform: translateX(-50%) translateY(20px);
+  position: fixed; left: 50%; bottom: calc(76px + var(--safe-b)); transform: translateX(-50%) translateY(20px);
   background: var(--card2); border: 1px solid var(--line); padding: 10px 16px; border-radius: 99px;
   opacity: 0; transition: .25s; pointer-events: none; z-index: 20; max-width: 90vw; text-align: center;
 }

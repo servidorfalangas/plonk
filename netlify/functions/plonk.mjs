@@ -83,6 +83,14 @@ function parseMaps(url) {
       u = parsed.searchParams.get("continue");
     }
   } catch {}
+  try {
+    const q = new URL(u).searchParams;
+    if (q.get("pano")) {
+      const vp = (q.get("viewpoint") || "").split(",");
+      return { pano: q.get("pano"), lat: +vp[0] || 0, lng: +vp[1] || 0,
+        heading: +q.get("heading") || 0, pitch: +q.get("pitch") || 0, fov: +q.get("fov") || 75 };
+    }
+  } catch {}
   const pano = u.match(/!1s([A-Za-z0-9_\-]{10,})!2e0/);
   const at = u.match(/@(-?\d+\.\d+),(-?\d+\.\d+),([^/?]*)/);
   if (!pano && !at) return null;

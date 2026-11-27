@@ -38,7 +38,7 @@ function today() {
 }
 function defaultState() {
   return {
-    v: 1, unlocked: [], cards: {}, introduced: {}, res: {}, confusion: {},
+    v: 1, unlocked: [], cards: {}, introduced: {}, res2: {}, confusion: {},
     day: today(), newToday: 0, settings: { newPerDay: 10 }, history: [],
   };
 }
@@ -192,6 +192,15 @@ function parseMaps(u) {
     const p = new URL(u);
     if (p.hostname.startsWith("consent.") && p.searchParams.get("continue")) u = p.searchParams.get("continue");
   } catch {}
+  // Formato api=1&map_action=pano&pano=...&viewpoint=lat,lng&heading=&pitch=&fov=
+  try {
+    const q = new URL(u).searchParams;
+    if (q.get("pano")) {
+      const vp = (q.get("viewpoint") || "").split(",");
+      return { pano: q.get("pano"), lat: +vp[0] || 0, lng: +vp[1] || 0,
+        heading: +q.get("heading") || 0, pitch: +q.get("pitch") || 0, fov: +q.get("fov") || 75 };
+    }
+  } catch {}
   const pano = u.match(/!1s([A-Za-z0-9_\-]{10,})!2e0/);
   const at = u.match(/@(-?\d+\.\d+),(-?\d+\.\d+),([^/?]*)/);
   if (!pano) return null;
@@ -214,7 +223,7 @@ function isMapsLink(link) {
 }
 
 async function resolveTip(tip) {
-  if (tip.key in S.res) return S.res[tip.key];
+  if (tip.key in S.res2) return S.res2[tip.key];
   let r = parseMaps(tip.link);
   if (!r) {
     try { r = await getJSON("/api/resolve?u=" + encodeURIComponent(tip.link)); }
@@ -224,9 +233,9 @@ async function resolveTip(tip) {
       r = null;
     }
   }
-  S.res[tip.key] = r && r.pano ? r : false;
+  S.res2[tip.key] = r && r.pano ? r : false;
   save();
-  return S.res[tip.key];
+  return S.res2[tip.key];
 }
 
 function svHTML(r) {
@@ -316,7 +325,7 @@ function onGraduate(key) {
   if (!key.endsWith("|p")) return;
   const tipKey = key.slice(0, -2);
   const tip = findTip(tipKey);
-  if (tip && isMapsLink(tip.link) && S.res[tipKey] !== false && !S.cards[tipKey + "|l"]) {
+  if (tip && isMapsLink(tip.link) && S.res2[tipKey] !== false && !S.cards[tipKey + "|l"]) {
     S.cards[tipKey + "|l"] = newCard();
   }
 }
@@ -432,7 +441,7 @@ function prefetchLocations() {
   (async () => {
     for (const k of keys.slice(0, 15)) {
       const tip = findTip(k);
-      if (tip && !(k in S.res)) await resolveTip(tip);
+      if (tip && !(k in S.res2)) await resolveTip(tip);
     }
   })();
 }
