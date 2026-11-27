@@ -9,6 +9,13 @@
   status = 200
   force = true
 
+# Páginas de Plonkit (los datos van dentro del HTML)
+[[redirects]]
+  from = "/pk/*"
+  to = "https://www.plonkit.net/:splat"
+  status = 200
+  force = true
+
 [[headers]]
   for = "/*"
   [headers.values]

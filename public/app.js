@@ -84,10 +84,47 @@ function cacheSet(key, d) {
   try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), d })); } catch {}
 }
 
+// Las páginas de Plonkit llegan a través del proxy /pk/* (netlify.toml) y
+// traen todos sus datos en un bloque JSON __PRELOADED_DATA__.
+async function plonkPage(path) {
+  const r = await fetch("/pk" + path);
+  if (!r.ok) throw new Error(`Plonkit respondió ${r.status}`);
+  const html = await r.text();
+  const m = html.match(/<script id="__PRELOADED_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+  if (!m) throw new Error("Plonkit no devolvió datos (" + path + ")");
+  return JSON.parse(m[1]);
+}
+async function fetchCountries() {
+  const d = await plonkPage("/guide");
+  return d.data
+    .filter((c) => c.code && !c.code.startsWith("XX") && (c.cat || []).length)
+    .map((c) => ({ slug: c.slug, title: c.title, code: c.code, cat: c.cat }));
+}
+async function fetchCountry(slug) {
+  const d = (await plonkPage("/" + slug)).data.public;
+  const steps = [];
+  (d.steps || []).forEach((s, si) => {
+    if (s.kind !== "tip") return;
+    let sub = null;
+    const tips = [];
+    for (const it of s.items || []) {
+      if (it.kind === "subsection") sub = it.title;
+      if (it.kind !== "tip") continue;
+      tips.push({
+        id: it.id, sub, text: it.data?.text || [],
+        img: it.data?.image?.imageUrl || null, link: it.data?.image?.imageLink || null,
+        tags: it.tags || [],
+      });
+    }
+    steps.push({ index: si, title: s.title, tips });
+  });
+  return { slug: d.slug, title: d.title, code: d.code, cat: d.cat, updatedAt: d.updatedAt, steps };
+}
+
 async function loadCountries() {
   let list = cacheGet("plonk_countries", 7 * DAY);
   if (!list) {
-    try { list = await getJSON("/api/countries"); cacheSet("plonk_countries", list); }
+    try { list = await fetchCountries(); cacheSet("plonk_countries", list); }
     catch (e) { list = cacheGet("plonk_countries", Infinity); if (!list) throw e; }
   }
   COUNTRIES = list;
@@ -99,7 +136,7 @@ async function loadCountry(slug) {
   const key = "plonk_c_" + slug;
   let d = cacheGet(key, 7 * DAY);
   if (!d) {
-    try { d = await getJSON("/api/country/" + slug); cacheSet(key, d); }
+    try { d = await fetchCountry(slug); cacheSet(key, d); }
     catch (e) { d = cacheGet(key, Infinity); if (!d) throw e; }
   }
   DATA[slug] = d;
