@@ -1,0 +1,20 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+# Imágenes de Plonkit servidas a través de nuestro propio dominio
+[[redirects]]
+  from = "/pimg/*"
+  to = "https://www.plonkit.net/images/resize/600/80/:splat"
+  status = 200
+  force = true
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
