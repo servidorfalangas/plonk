@@ -6,6 +6,7 @@
 const DAY = 86400000;
 const STORE_KEY = "plonk_state_v1";
 const RES_KEY = "plonk_res_v4";
+const TR_VER = "2";
 const DATA_CACHE = "plonk-data-v1";
 const EASY_ORDER = [
   "spain", "united-states", "japan", "brazil", "russia", "united-kingdom", "france",
@@ -17,9 +18,9 @@ const EASY_ORDER = [
 const START_UNLOCKED = 3;
 const UNLOCK_THRESHOLD = 0.8;
 const LEVELS = {
-  facil: { name: "Fácil", desc: "Los 25 países más comunes", count: 25, extraSteps: false },
-  medio: { name: "Medio", desc: "70 países", count: 70, extraSteps: false },
-  dificil: { name: "Difícil", desc: "Todos los países + pistas regionales", count: Infinity, extraSteps: true },
+  facil: { name: "Fácil", desc: "Los 25 países que más salen", count: 25 },
+  medio: { name: "Medio", desc: "Los 70 países más comunes", count: 70 },
+  dificil: { name: "Difícil", desc: "Los 140 países de Plonkit", count: Infinity },
 };
 const CATS = [
   { id: "mezcla", name: "Todo mezclado", icon: "🎲" },
@@ -193,9 +194,19 @@ async function loadCountry(slug) {
   if (local && Date.now() - (local._t || 0) < 30 * DAY) return local;
   userWaiting++;
   try {
-    const d = await fetchCountry(slug);
-    DATA[slug] = d; d._t = Date.now();
-    await dataSet("c_" + slug, { t: d._t, d });
+    let d = null;
+    // 1) Caché compartida en Netlify (rápida, sin límites)
+    try {
+      const r = await fetch("/api/c/" + slug);
+      if (r.ok) { d = await r.json(); if (d.v !== 2 || Date.now() - (d._t || 0) > 30 * DAY) d = null; }
+    } catch {}
+    // 2) Directamente de Plonkit, y se guarda en la caché compartida
+    if (!d) {
+      d = await fetchCountry(slug);
+      fetch("/api/c/" + slug, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(d) }).catch(() => {});
+    }
+    DATA[slug] = d; d._t = d._t || Date.now();
+    await dataSet("c_" + slug, { t: Date.now(), d });
     return d;
   } catch (e) {
     if (local) return local;
@@ -203,11 +214,15 @@ async function loadCountry(slug) {
   } finally { userWaiting--; }
 }
 async function loadMany(slugs, onProgress) {
-  let i = 0;
-  for (const s of slugs) {
-    try { await loadCountry(s); } catch {}
-    onProgress && onProgress(++i, slugs.length);
-  }
+  let i = 0, next = 0;
+  const worker = async () => {
+    while (next < slugs.length) {
+      const s = slugs[next++];
+      try { await loadCountry(s); } catch {}
+      onProgress && onProgress(++i, slugs.length);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
 }
 
 // Descarga en segundo plano de los países que falten
@@ -220,7 +235,7 @@ async function prefetchAll() {
       if (await loadCountryLocal(s)) continue;
       while (userWaiting || session) await sleep(3000);
       try { await loadCountry(s); } catch { await sleep(20000); }
-      await sleep(2500);
+      await sleep(800);
     }
   } finally { prefetching = false; }
 }
@@ -260,7 +275,7 @@ function deckTips(slug) {
 function allTips(slug, extraSteps) {
   const d = DATA[slug];
   if (!d) return [];
-  const steps = extraSteps ? d.steps.filter((s) => !/spotlight/i.test(s.title)) : [idStep(d)];
+  const steps = extraSteps ? d.steps : [idStep(d)];
   return steps.flatMap((s) => s.tips.filter((t) => t.img || t.links.length).map((t) => withMeta(t, slug)));
 }
 function findTip(key) {
@@ -326,6 +341,8 @@ async function resolveLink(link) {
 async function pickLocation(tip, avoid) {
   const links = shuffle([...(tip.links || [])]);
   if (avoid && links.length > 1) links.sort((a, b) => (a === avoid) - (b === avoid));
+  const ready = links.find((l) => RES[l] && l !== avoid);
+  if (ready) return { ...RES[ready], link: ready };
   for (const l of links) {
     const r = await resolveLink(l);
     if (r) return { ...r, link: l };
@@ -342,7 +359,7 @@ function svHTML(r) {
 /* ---------------- Traducción ---------------- */
 
 const LOWER_CAPS = /\b(NOTE|NOTES|IMPORTANT|TIP|WARNING|ONLY|NOT|ALWAYS|NEVER|AND|OR|ALSO|VERY|ALL|BUT|THE|IS|ARE|DO|DOES|NO)\b/g;
-const KEEP_RE = /"[^"\n]{1,40}"|“[^”\n]{1,40}”|\b(?:Google cars?|Street View|snorkel|trekker|follow cars?|NMPZ|[Gg]en ?[1-4](?: ?(?:trekker|car))?|meta|metas)\b|\b[A-ZÀ-Ý][A-ZÀ-Ý0-9]+(?:[- ][A-ZÀ-Ý0-9]{2,})*\b/g;
+const KEEP_RE = /"[^"\n]{1,40}"|“[^”\n]{1,40}”|\b(?:Google cars?|Street View|snorkel|trekker|follow cars?|NMPZ|[Gg]en ?[1-4](?: ?(?:trekker|car))?|meta|metas|chevrons?|rifts?|tapering)\b|\b[A-ZÀ-Ý][A-ZÀ-Ý0-9]+(?:[- ][A-ZÀ-Ý0-9]{2,})*\b/g;
 
 function protect(line) {
   const keep = [];
@@ -361,6 +378,9 @@ const POST_FIX = [
   [/\bplatos\b/g, "matrículas"], [/\bPlatos\b/g, "Matrículas"],
   [/\bsignos\b/g, "señales"], [/\bSignos\b/g, "Señales"],
   [/\bpolos\b/g, "postes"], [/\bPolos\b/g, "Postes"],
+  [/\bencontrará\b/g, "encontrarás"], [/\bverá\b/g, "verás"], [/\bnotará\b/g, "notarás"],
+  [/\bEncontrará\b/g, "Encontrarás"], [/\bVerá\b/g, "Verás"], [/\bpodrá\b/g, "podrás"],
+  [/\bmarcadores de carretera\b/g, "líneas de la carretera"], [/\bplacas de matrícula\b/g, "matrículas"],
 ];
 function preFix(line) {
   // Da contexto al traductor: "plates" casi siempre son matrículas
@@ -368,23 +388,23 @@ function preFix(line) {
   return line;
 }
 async function mtLines(lines) {
-  // 1) Endpoint por líneas (mantiene el orden exacto)
+  // 1) Todo el texto junto: el traductor tiene más contexto y traduce mejor
   try {
-    const r = await fetch("https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=en&tl=es&" + lines.map((l) => "q=" + encodeURIComponent(l)).join("&"));
+    const r = await fetch("https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=es&dt=t&q=" + encodeURIComponent(lines.join("\n")));
     if (r.ok) {
       const data = await r.json();
-      const arr = (Array.isArray(data) ? data : [data]).map((x) => (Array.isArray(x) ? x[0] : x));
-      if (arr.length === lines.length) return arr;
+      const out = (data[0] || []).map((seg) => seg[0] || "").join("").split("\n");
+      if (out.length === lines.length) return out;
     }
   } catch {}
-  // 2) Alternativa
-  const r = await fetch("https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=es&dt=t&q=" + encodeURIComponent(lines.join("\n")));
+  // 2) Alternativa línea a línea
+  const r = await fetch("https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=en&tl=es&" + lines.map((l) => "q=" + encodeURIComponent(l)).join("&"));
   if (!r.ok) throw new Error("traducción " + r.status);
   const data = await r.json();
-  return (data[0] || []).map((seg) => seg[0] || "").join("").split("\n");
+  return (Array.isArray(data) ? data : [data]).map((x) => (Array.isArray(x) ? x[0] : x));
 }
 async function translateTip(tip) {
-  const key = "tr_" + tip.key;
+  const key = "tr" + TR_VER + "_" + tip.key;
   if (TR_MEM[key]) return TR_MEM[key];
   const cached = await dataGet(key);
   if (cached) return (TR_MEM[key] = cached);
@@ -622,10 +642,9 @@ async function startPractice(catId, level) {
   const slugs = levelCountries(level);
   const missing = [];
   for (const s of slugs) if (!(await loadCountryLocal(s))) missing.push(s);
-  if (missing.length) await loadMany(missing, (i, n) => loadingScreen(`Descargando países… ${i}/${n}\n(solo la primera vez)`));
-  const lv = LEVELS[level];
+  if (missing.length) await loadMany(missing, (i, n) => loadingScreen(`Preparando países… ${i}/${n}\n(solo la primera vez)`));
   const loaded = slugs.filter((s) => DATA[s]);
-  let pool = loaded.flatMap((s) => allTips(s, lv.extraSteps));
+  let pool = loaded.flatMap((s) => allTips(s, true));
   if (catId === "ubicacion") pool = pool.filter((t) => t.links.length);
   else if (catId !== "mezcla") pool = pool.filter((t) => (t.cats || []).includes(catId));
   if (!pool.length) { toast("No hay pistas de este tipo en este nivel"); return go("practice"); }
@@ -649,20 +668,20 @@ function beginSession(s) {
   nextItem();
 }
 
+// Prepara las siguientes tarjetas (ubicaciones y traducciones) mientras respondes
 function prefetchSessionLocations() {
   if (!session) return;
-  const tips = session.queue.filter((q) => q.type !== "intro").map((q) => findTip(q.key.replace(/\|[pl]$/, ""))).filter(Boolean);
-  (async () => {
-    for (const t of tips.slice(0, 12)) {
-      if (!session) return;
-      for (const l of t.links.slice(0, 2)) if (!(l in RES)) await resolveLink(l);
-      translateTip(t).catch(() => {});
+  const tips = session.queue.slice(0, 4).map((q) => findTip(q.key.replace(/\|[pl]$/, ""))).filter(Boolean);
+  for (const t of tips) {
+    translateTip(t).catch(() => {});
+    if (t.links.length && !t.links.some((l) => RES[l])) {
+      (async () => { for (const l of shuffle([...t.links])) { if (await resolveLink(l)) break; } })();
     }
-  })();
+  }
 }
 
 function endSession() {
-  document.body.classList.remove("in-session");
+  document.body.classList.remove("in-session", "answered");
   const s = session;
   session = null;
   if (s && s.done) {
@@ -695,6 +714,7 @@ async function nextItem() {
   window.scrollTo(0, 0);
   const item = session.queue.shift();
   if (!item) return endSession();
+  prefetchSessionLocations();
   if (item.type === "intro") return showIntro(item);
   const tipKey = item.key.replace(/\|[pl]$/, "");
   const tip = findTip(tipKey);
@@ -746,7 +766,7 @@ function showCard(item, tip, loc) {
     <div class="kind">${loc ? "📍 ¿En qué país estás?" : "🔎 ¿De qué país es esta pista?"}</div>
     ${loc ? svHTML(loc) : `<div class="clue">${imgHTML(tip.img)}</div>`}
     ${loc && session.mode === "practice" && session.catId !== "mezcla" && session.catId !== "ubicacion" ? `<p class="small muted" style="margin:6px 0 0">Fíjate en: ${CATS.find((c) => c.id === session.catId).icon} ${esc(CATS.find((c) => c.id === session.catId).name.toLowerCase())}</p>` : ""}
-    <div class="opts">${opts.map((s) => `<button class="opt" data-s="${s}"><span class="f">${flag(s)}</span>${esc(countryName(s))}</button>`).join("")}</div>
+    <div class="opts">${opts.map((s) => `<button class="opt" data-s="${s}"><span class="f">${flag(s)}</span><span class="n">${esc(countryName(s))}</span></button>`).join("")}</div>
     <div id="back"></div>`;
   bindQuit();
   app.querySelectorAll(".opt").forEach((b) => (b.onclick = () => answer(item, tip, !!loc, b.dataset.s)));
@@ -773,16 +793,26 @@ function answer(item, tip, isLoc, chosen) {
   if (again) requeue(item, correct ? 4 : 3);
   if (!correct && item.type === "practice" && !item.retry) requeue({ ...item, retry: true }, 5);
   save();
-  $("#back").innerHTML = `<div class="back panel">
-      <div class="verdict ${correct ? "good" : "bad"}">${correct ? "¡Correcto!" : "Era " + flag(tip.slug) + " " + esc(countryName(tip.slug))}</div>
-      ${tip.img ? `<div class="clue" style="margin-bottom:10px">${imgHTML(tip.img)}</div>` : ""}
-      ${catsHTML(tip)}
-      ${tipTextHTML(tip)}
-    </div>
-    <div class="sticky"><button class="btn" id="next">Siguiente</button></div>`;
+  if (navigator.vibrate) try { navigator.vibrate(correct ? 15 : [30, 40, 30]); } catch {}
+  // Hoja inferior: veredicto + Siguiente siempre a mano, explicación desplazable debajo
+  $("#back").innerHTML = `<div class="sheet ${correct ? "good" : "bad"}">
+      <div class="sheet-head">
+        <div class="verdict ${correct ? "good" : "bad"}">${correct ? "✓ ¡Correcto!" : "✗ Era " + flag(tip.slug) + " " + esc(countryName(tip.slug))}</div>
+        <button class="btn" id="next">Siguiente</button>
+      </div>
+      <div class="sheet-body">
+        ${catsHTML(tip)}
+        ${tip.img ? `<div class="clue small-clue">${imgHTML(tip.img)}</div>` : ""}
+        ${tipTextHTML(tip)}
+      </div>
+    </div>`;
+  document.body.classList.add("answered");
   fillTranslations($("#back"));
-  $("#next").onclick = async () => { if (session.mode === "daily") await maybeUnlock(); nextItem(); };
-  $("#back").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("#next").onclick = async () => {
+    document.body.classList.remove("answered");
+    if (session.mode === "daily") await maybeUnlock();
+    nextItem();
+  };
 }
 
 /* ---------------- Pantallas ---------------- */

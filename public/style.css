@@ -69,8 +69,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .kind { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
 
 .clue { background: #dfe4ea; border-radius: var(--radius); overflow: hidden; display: flex; justify-content: center; align-items: center; min-height: 160px; }
-.clue img { display: block; max-width: 100%; max-height: 46vh; object-fit: contain; }
-.sv { position: relative; overflow: hidden; height: 56vh; min-height: 300px; border-radius: var(--radius); background: #000; }
+.clue img { display: block; max-width: 100%; max-height: 42vh; max-height: 42dvh; object-fit: contain; }
+.sv { position: relative; overflow: hidden; height: calc(100vh - 330px); height: calc(100dvh - 330px); min-height: 230px; border-radius: var(--radius); background: #000; }
 .sv iframe { position: absolute; left: 0; top: -72px; width: 100%; height: calc(100% + 72px); border: 0; }
 
 .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
@@ -134,3 +134,25 @@ label.set:last-child { border-bottom: 0; }
 .linkbtn { background: none; border: 0; color: var(--accent); padding: 4px 0; font-size: 0.85rem; }
 #tabs button { padding: 4px 10px; }
 .loading { white-space: pre-line; }
+
+/* Hoja de respuesta */
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; max-width: 640px; margin: 0 auto;
+  background: var(--card); border-top: 3px solid var(--line); border-radius: 18px 18px 0 0;
+  box-shadow: 0 -10px 30px rgba(0,0,0,.45); animation: up .18s ease-out;
+  display: flex; flex-direction: column; max-height: 62vh; max-height: 62dvh;
+}
+.sheet.good { border-top-color: var(--good); }
+.sheet.bad { border-top-color: var(--bad); }
+@keyframes up { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+.sheet-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.sheet-head .verdict { flex: 1; margin: 0; font-size: 1.05rem; }
+.sheet-head .btn { width: auto; padding: 12px 22px; }
+.sheet-body { overflow-y: auto; padding: 12px 14px calc(64px + var(--safe-b)); -webkit-overflow-scrolling: touch; }
+.small-clue { min-height: 0; margin: 8px 0 10px; }
+.small-clue img { max-height: 30vh; }
+body.answered .opts { pointer-events: none; }
+.opt { transition: transform .08s; }
+.opt:active { transform: scale(.97); }
+.opt .n { line-height: 1.2; }
+.btn:active, .mode:active, .citem:active { filter: brightness(1.15); }
