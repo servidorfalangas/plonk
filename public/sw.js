@@ -1,5 +1,5 @@
-const VERSION = "plonk-v10";
-const SHELL = ["/", "/index.html", "/style.css?v=10", "/app.js?v=10", "/manifest.webmanifest", "/icon.svg", "/icon-180.png", "/icon-192.png", "/icon-512.png"];
+const VERSION = "plonk-v11";
+const SHELL = ["/", "/index.html", "/style.css?v=11", "/app.js?v=11", "/manifest.webmanifest", "/icon.svg", "/icon-180.png", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

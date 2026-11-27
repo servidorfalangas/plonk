@@ -845,7 +845,7 @@ function lookalikes(slug, n) {
   if (d) {
     const text = d.steps.flatMap((st) => st.tips.flatMap((t) => t.text)).join(" ").toLowerCase();
     const counts = COUNTRIES.filter((c) => c.slug !== slug && c.title.length > 3)
-      .map((c) => [c.slug, text.split(c.title.toLowerCase()).length - 1]).filter(([, n]) => n > 0)
+      .map((c) => [c.slug, (text.match(new RegExp(`(?<![a-z])${c.title.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z])`, "g")) || []).length]).filter(([, n]) => n > 0)
       .sort((a, b) => b[1] - a[1]);
     counts.forEach(([x]) => add(x));
   }
